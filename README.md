@@ -1,71 +1,114 @@
 # CBNU Campus Ontology
 
-# 충북대 학사 행정 기반 온톨로지 및 지식그래프 구현
+충북대학교의 분산된 도서관, 학사행정, LMS, 비교과 정보를 Neo4j 지식그래프로 통합해 복합 질의와 추천 서비스를 구현하고자 했습니다.
 
-## 기존 시스템의 문제점
+이 프로젝트의 핵심은 단순히 데이터를 한곳에 모으는 것이 아니라, 학생, 과목, 도서, 비교과 프로그램, 장학금, 학사일정, 전공 트랙 사이의 관계를 그래프로 연결해 "지금 이 학생에게 필요한 정보"를 한 번에 탐색할 수 있게 만드는 것입니다.
 
-- **시스템 분산으로 인한 어려움**  
-  도서관·학사행정(개신누리)·LMS·비교과(CIEAT)·학과 공지 시스템이 각각 따로 존재함. 동일 학사 흐름(도서–수업–학사 일정–장학)을 한 화면에서 확인하기 어렵고, 서비스 간 교차 참조가 불가능함.
+## Why I Built This
 
-- **학생 관점**
+대학 정보 시스템은 보통 기능별로 분리되어 있습니다. 도서관은 도서관대로, 학사행정은 학사행정대로, LMS는 LMS대로, 비교과 시스템은 비교과 시스템대로 동작합니다. 학생 입장에서는 과목, 추천 도서, 장학 조건, 비교과 프로그램, 졸업 요건을 확인하기 위해 여러 사이트를 반복해서 오가야 합니다.
 
-  1. 필요한 정보가 어디에 있는지 구분하기 힘듦 → 학사/장학/비교과/공지 위치가 사이트마다 다름.
-  2. 시스템이 전부 독립 운영임 → 과제 자료 찾기, 졸업 요건 확인 같은 단일 업무도 여러 사이트를 거쳐야 함.
-  3. 복합/의미 기반 질문(“내가 듣는 과목의 추천도서 중 지금 대출 가능한 책은?” 등)을 자동 처리하기 어려움.
-  4. 공지가 메인 홈페이지, 개신누리, LMS, CIEAT, 학과/단과대 공지로 분산되어 일정 누락 위험이 큼.
+행정 입장에서도 같은 문제가 생깁니다. 이미 게시된 공지나 규정이 있어도 학생 문의는 반복되고, 학사, 수강, 장학, 비교과 데이터를 매번 수동으로 결합해야 합니다. 특히 "자료구조를 듣는 3학년 CSE 학생에게 연결되는 추천 도서, 비교과 프로그램, 장학금은 무엇인가?" 같은 복합 질문은 기존 테이블/게시판 중심 구조만으로는 바로 처리하기 어렵습니다.
 
-- **행정 관점**
+그래서 이 PoC는 캠퍼스 데이터를 온톨로지 기반 지식그래프로 모델링하고, Neo4j에서 관계 중심 질의를 수행하는 구조를 제안합니다.
 
-  1. 이미 게시된 안내라도 반복 문의가 많이 들어와 단순 응대에 시간을 소비함.
-  2. 학사·장학·도서관·비교과 데이터가 분리되어 있어 통합 분석/행정 자동화가 어려움. 매번 수작업으로 데이터를 결합해야 함.
-  3. 중앙-단과대-학과 공지 시점이 어긋나 전달 누락과 재확인 업무가 발생함.
+## Design Intuition
 
-- 이러한 문제를 해결하기 위해 지식그래프/온톨로지 기반 통합 데이터 모델을 구성함. 도서관·학사행정·LMS·비교과·학과 공지 정보를 하나의 그래프에 연결하여 복합 질의를 처리하고, 학생/행정 모두가 단일 그래프에서 연관 정보를 탐색할 수 있도록 함.
+![System Architecture](docs/images/architecture.png)
 
-## 1. Ontology & Architecture
+이 프로젝트는 흩어진 캠퍼스 정보를 하나의 지도로 다시 그리는 작업에 가깝습니다. 도서관, 학사행정, LMS, 비교과, 학과 공지는 각각 다른 건물에 붙은 안내문처럼 따로 존재합니다. 학생은 필요한 정보를 찾기 위해 건물을 계속 옮겨 다니고, 행정은 여러 안내문을 손으로 대조해야 합니다.
 
-### 핵심 노드(Label)
+위 아키텍처 그림은 그 흩어진 안내문을 하나의 캠퍼스 지도 위에 다시 꽂는 흐름을 보여줍니다.
 
-- `Student`, `Professor`, `Course`, `Book`, `NonCurricularProgram`, `Scholarship`
-- `AcademicEvent`, `Term`, `Department`, `College`, `MajorTrack`
-- `AcademicInfo`, `AcademicActor`, `ScholarlyResource` 등 상위 개념 레이블로 계층 표현
+1. 도서관, 학사행정, LMS, 비교과, 학과 공지 데이터를 입력 소스로 둡니다.
+2. ETL 단계에서 CSV 또는 합성 샘플 데이터를 정제하고 표준 속성으로 맞춥니다.
+3. 온톨로지 스키마에 따라 Neo4j 노드와 관계로 적재합니다.
+4. 학생 맥락 조회, 과목별 리소스 조회, 장학/비교과 추천 같은 그래프 질의를 실행합니다.
 
-### 주요 관계(Relationship)
+![Ontology Box Embedding Concept](docs/images/ontology-box-embedding.png)
 
-- 학사 구조: `(:Student)-[:ENROLLED_IN]->(:Course)`, `(:Course)-[:HELD_IN_TERM]->(:Term)`
-- 비교과/장학: `(:Course)-[:RELATED_TO_PROGRAM]->(:NonCurricularProgram)`,
-  `(:Scholarship)-[:REQUIRES_PROGRAM]->(:NonCurricularProgram)`
-- 조직 구조: `(:MajorTrack)-[:BELONGS_TO]->(:Department)-[:BELONGS_TO]->(:College)`
-- 학사일정: `(:NonCurricularProgram)-[:SUITABLE_FOR_YEAR]->(:AcademicEvent)`,
-  `(:AcademicEvent)-[:RELATED_TO_COURSE]->(:Course)`
+온톨로지는 정보들을 같은 기준으로 정렬하기 위한 개념 지도입니다. 예를 들어 `Student`, `Course`, `Program`, `Scholarship`을 각각 독립된 목록으로 보면 연결이 잘 보이지 않습니다. 하지만 각 개념을 영역으로 놓고 보면, 특정 학생이 듣는 과목, 그 과목과 관련된 비교과, 그 비교과를 요구하는 장학금처럼 겹치는 부분을 찾을 수 있습니다.
 
-### 데이터 규모(샘플)
+이 그림은 그런 직관을 보여주기 위한 비유입니다. 개별 데이터 조각을 따로 보는 대신, 개념들의 위치와 겹침을 기준으로 "같이 봐야 하는 정보"를 찾는다는 뜻입니다.
 
-- 학생 5,600명 / 과목 260개 / 비교과 100개 / 장학금 50개 / 단과대 5개 / 학과 20개 / 학사일정 40개
-- 모든 관계는 `UNWIND` 기반 배치로 생성되며 `id` 속성에 유니크 제약을 부여
+![Graph Embedding Pipeline](docs/images/graph-embedding-pipeline.png)
 
----
+그래프는 관계를 따라 이동할 수 있는 길입니다. 학생에서 과목으로, 과목에서 추천 도서로, 과목에서 비교과 프로그램으로, 비교과에서 장학금으로 이동하면 기존 게시판 검색으로는 한 번에 보기 어려운 맥락이 만들어집니다.
 
-## 2. Repository Layout
+이 파이프라인 그림은 그 관계망을 분석과 추천에 사용할 수 있는 형태로 정리하는 관점을 보여줍니다. 이 README에서는 미래 계획을 말하려는 용도보다, 왜 테이블 목록이 아니라 그래프 구조를 선택했는지 설명하기 위한 개념도입니다.
 
-```
-cbnu-campus-ontology/
-├── cbnu_ontology_poc/
-│   ├── src/                # ontology schema, loaders, graph builder, query modules
-│   ├── tests/              # pytest 단위/통합 테스트 + fake Neo4j 클라이언트
-│   ├── data/               # CSV 샘플 데이터
-│   └── neo4j_loader.py     # 대규모 그래프 생성·적재 스크립트
-└── README.md               # 본 문서
-```
+## Knowledge Graph Model
 
----
+이 저장소에는 두 수준의 모델이 들어 있습니다.
 
-## 3. Getting Started
+`neo4j_loader.py`는 시각화 결과를 위한 대규모 합성 그래프를 생성합니다. 학생 5,600명, 과목 260개, 비교과 프로그램 100개, 장학금 50개, 도서 500개, 학과 20개, 전공 트랙 30개, 학사일정 40개 규모의 데이터를 만들어 Neo4j에 적재합니다.
+
+`cbnu_ontology_poc/src` 패키지는 CSV 기반 ETL을 테스트 가능한 단위로 나눈 코어 구현입니다. 실제 CSV 파일을 `data/`에 넣고 `Student`, `Course`, `Book`, `Program`, `Scholarship`, `Department` 노드와 관계를 적재할 수 있게 구성했습니다.
+
+### Main Labels
+
+| Label                                 | Meaning          | Example                          |
+| ------------------------------------- | ---------------- | -------------------------------- |
+| `Student`                             | 학생             | 학번, 이름, 학년, 상태           |
+| `Course`                              | 교과목           | 과목명, 학점, 학과, 수업 유형    |
+| `Book`                                | 추천/참고 도서   | 제목, 저자, 주제, 대출 가능 여부 |
+| `NonCurricularProgram` / `Program`    | 비교과 프로그램  | 역량, 대상 학과, 대상 학년       |
+| `Scholarship`                         | 장학금           | 최소 GPA, 요구 학점, 대상 트랙   |
+| `Department`, `College`, `MajorTrack` | 조직과 전공 구조 | 단과대, 학과, 전공 트랙          |
+| `Term`, `AcademicEvent`               | 학기와 학사일정  | 수강신청, 중간고사, 졸업 점검    |
+
+### Main Relationships
+
+| Relationship                                                           | Meaning                       |
+| ---------------------------------------------------------------------- | ----------------------------- |
+| `(:Student)-[:ENROLLED_IN]->(:Course)`                                 | 학생이 수강 중인 과목         |
+| `(:Course)-[:HAS_RECOMMENDED_BOOK]->(:Book)`                           | 과목에 연결된 추천 도서       |
+| `(:Course)-[:RELATED_TO_PROGRAM]->(:NonCurricularProgram)`             | 과목과 관련된 비교과 프로그램 |
+| `(:Scholarship)-[:REQUIRES_COURSE]->(:Course)`                         | 장학금 신청에 필요한 과목     |
+| `(:Scholarship)-[:REQUIRES_PROGRAM]->(:NonCurricularProgram)`          | 장학금 신청에 필요한 비교과   |
+| `(:Student)-[:MAJOR_IN]->(:MajorTrack)`                                | 학생의 전공 트랙              |
+| `(:MajorTrack)-[:BELONGS_TO]->(:Department)-[:BELONGS_TO]->(:College)` | 전공/학과/단과대 구조         |
+| `(:Course)-[:HELD_IN_TERM]->(:Term)`                                   | 과목이 열린 학기              |
+| `(:AcademicEvent)-[:RELATED_TO_COURSE]->(:Course)`                     | 학사일정과 관련 과목          |
+
+## Results
+
+### Full Knowledge Graph
+
+![Full Knowledge Graph](docs/images/all.png)
+
+전체 그래프는 학생, 수강 과목, 추천 도서, 비교과, 장학금, 전공/학과 구조가 하나의 네트워크로 연결되는 모습을 보여줍니다. 기존 시스템에서는 각각 다른 화면에서 확인해야 하는 정보가 관계 기반으로 이어지므로, 학생 단위의 맥락 조회가 가능해집니다.
+
+### Program and Academic Event Graph
+
+![Program and Academic Event Graph](docs/images/program.png)
+
+비교과 프로그램과 학사일정을 연결한 그래프입니다. 특정 학년이나 학기 이벤트에 맞춰 어떤 비교과 프로그램이 적합한지 탐색할 수 있습니다. 단순 프로그램 목록보다 실제 학사 흐름과 함께 볼 수 있다는 점이 중요합니다.
+
+### Course Enrollment and Book Graph
+
+![Course Enrollment and Book Graph](docs/images/datastructure.png)
+
+`Data Structures` 과목을 중심으로 수강 학생과 추천 도서가 어떻게 연결되는지 보여줍니다. 이 구조를 확장하면 과목별 학습 리소스 추천, 대출 가능 도서 안내, 동일 과목 수강생의 학습 네트워크 분석으로 이어질 수 있습니다.
+
+### Major Track, Student, and Scholarship Graph
+
+![Major Track, Student, and Scholarship Graph](docs/images/student.png)
+
+전공 트랙을 기준으로 학생과 장학금 정보를 연결한 그래프입니다. 이전 검토에서 정리한 것처럼 이 이미지는 단순 "학생 그래프"가 아니라 "전공 트랙 기반 학생/장학 탐색"을 보여주는 결과로 보는 편이 정확합니다.
+
+### College, Department, and Major Structure
+
+![College, Department, and Major Structure](docs/images/college_department.png)
+
+단과대, 학과, 전공 트랙의 계층 구조를 그래프로 표현합니다. 행정 조직과 학업 경로를 함께 모델링하면 학과별 프로그램 추천, 전공별 장학 조건 탐색, 조직 단위 통계 분석의 기준점으로 사용할 수 있습니다.
+
+## How to Run
 
 ### Requirements
 
 - Python 3.11+
-- Neo4j 5.x (Aura Free 또는 Desktop)
+- Neo4j 5.x 또는 Neo4j Aura
 - pip / virtualenv
 
 ```powershell
@@ -74,65 +117,79 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 3.1 Prerequisites
-
-- Python 3.11+
-- Neo4j Aura Free 또는 로컬 Neo4j 5.x
-- Poetry/venv 등 가상환경(선택)
-
-### 3.3 데이터 적재
+Neo4j 접속 정보는 환경 변수로 지정합니다.
 
 ```powershell
-cd cbnu-campus-ontology/cbnu_ontology_poc
+$env:NEO4J_URI="bolt://localhost:7687"
+$env:NEO4J_USER="neo4j"
+$env:NEO4J_PASSWORD="your-password"
+```
+
+대규모 합성 샘플 그래프를 생성하려면 다음 명령을 실행합니다.
+
+```powershell
+cd cbnu_ontology_poc
 python neo4j_loader.py
 ```
 
-출력 메시지 `Sample data loaded. Execute pytest to run query validations.` 가 나타나면
-Neo4j 브라우저에서 바로 그래프를 조회할 수 있습니다.
+실행이 끝나면 Neo4j Browser에서 `MATCH (n) RETURN n LIMIT 100` 같은 질의로 그래프를 확인할 수 있습니다.
 
----
+## CSV ETL Mode
 
-## 4. Testing
+`cbnu_ontology_poc/data/`에 다음 CSV 파일을 넣으면 `src/graph/graph_builder.py`의 적재 로직을 사용할 수 있습니다.
 
-`tests/` 디렉터리에는 두 범주의 테스트가 있습니다.
+| File               | Required Columns                                         |
+| ------------------ | -------------------------------------------------------- |
+| `students.csv`     | `student_id`, `name`, `dept_id`, `year`, `status`        |
+| `courses.csv`      | `course_id`, `name`, `dept_id`, `credit`, `type`         |
+| `books.csv`        | `book_id`, `title`, `author`, `topic`, `available`       |
+| `programs.csv`     | `program_id`, `name`, `target_dept_id`, `skill_tag`      |
+| `scholarships.csv` | `scholarship_id`, `name`, `min_gpa`, `required_credit`   |
+| `departments.csv`  | `dept_id`, `name`                                        |
+| `relations.csv`    | `from_label`, `from_id`, `rel_type`, `to_label`, `to_id` |
 
-- **기존 단위 테스트**: ETL과 그래프 빌더를 `FakeNeo4jClient` 로 검증 (`pytest tests/`)
-- **Neo4j 통합 테스트**: `tests/test_neo4j_loader_integration.py`
-  - 추천 도서 질의, 트랙-비교과-장학 번들, 졸업 요건 스냅샷, 노드/관계 요약을 검증
+코어 질의는 `src/queries/core_queries.py`에 들어 있습니다.
 
-실행 방법:
+- `get_student_context(client, student_id)`: 학생, 수강 과목, 추천 도서, 관련 비교과, 장학금을 조회합니다.
+- `get_course_resources(client, course_id)`: 과목 기준 추천 도서, 관련 비교과, 장학금을 조회합니다.
+
+## Validation
+
+단위 테스트는 Neo4j 서버 없이 Fake 클라이언트로 ETL, 그래프 적재, 핵심 질의를 검증합니다.
 
 ```powershell
-pytest
+pytest cbnu_ontology_poc\tests\test_etl.py cbnu_ontology_poc\tests\test_graph_builder.py cbnu_ontology_poc\tests\test_core_queries.py
 ```
 
----
+실제 Neo4j 적재까지 검증하려면 Neo4j 서버를 실행하고 환경 변수를 지정한 뒤 통합 테스트를 실행합니다.
 
-## 5. Sample Graph Views
+```powershell
+pytest cbnu_ontology_poc\tests\test_neo4j_loader_integration.py
+```
 
-아래 이미지는 Neo4j Browser에서 추출한 주요 시각화 예시입니다.
+## Repository Layout
 
-1. **교과·비교과 프로그램 – 학사일정**  
-   `docs/images/program.png`  
-   ![Program vs Academic Event](docs/images/program.png)  
-   학기별 이벤트(수강신청, 중간/기말고사 등)를 중심으로, 주변에 Career/Leadership/Research 등 프로그램 노드를 연결했습니다. 일정별 프로그램 밀도를 한눈에 확인할 수 있습니다.
-
-2. **학생 – 과목 – 도서 – 장학 전체 구조**  
-   `docs/images/all.png`  
-   ![Global Student Course Graph](docs/images/all.png)  
-   학생 수강, 추천 도서, 비교과, 장학금이 어떻게 묶이는지 전체 망을 보여줍니다. 실제 운영 데이터로 확장 시 구조적 병목이나 고립된 하위 그래프를 찾는 데 유용합니다.
-
-3. **전공 – 장학 – 학생**  
-   `docs/images/student.png`  
-   ![Major Scholarship Graph](docs/images/student.png)  
-   `CSE AI Systems` 전공 노드를 중심으로 학생과 장학 제도가 동시에 연결된 모습입니다. 특정 전공 학생에게 열려 있는 장학 옵션을 즉시 탐색할 수 있습니다.
-
-4. **과목 – 학생 수강 관계**  
-   `docs/images/datastructure.png`  
-   ![Course Enrollment Graph](docs/images/datastructure.png)  
-   `Data Structures` 과목을 기준으로 실제 이름을 가진 학생들이 어떻게 묶이는지 보여줍니다. 공동 수강생 네트워크, 인기 과목 분석 등에 활용 가능합니다.
-
-5. **단과대 – 전공/학과 조직도**  
-   `docs/images/college_department.png`  
-   ![College Department Graph](docs/images/college_department.png)  
-   단과대/스쿨 노드와 그 아래 학과·융합 전공을 연결해 조직 구조를 네트워크 형태로 시각화했습니다.
+```text
+campus-ontology/
+|-- README.md
+|-- requirements.txt
+|-- docs/
+|   `-- images/
+|       |-- architecture.png
+|       |-- all.png
+|       |-- program.png
+|       |-- datastructure.png
+|       |-- student.png
+|       |-- college_department.png
+|       |-- ontology-box-embedding.png
+|       `-- graph-embedding-pipeline.png
+`-- cbnu_ontology_poc/
+    |-- neo4j_loader.py
+    |-- data/
+    |-- src/
+    |   |-- ontology_schema.py
+    |   |-- etl/
+    |   |-- graph/
+    |   `-- queries/
+    `-- tests/
+```
